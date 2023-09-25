@@ -1,8 +1,91 @@
 use proc_macro::TokenStream;
+use proc_macro2::TokenStream as TokenStream2;
+use quote::quote;
+use syn;
 
 #[proc_macro_derive(Builder)]
 pub fn derive(input: TokenStream) -> TokenStream {
-    let _ = input;
+    match do_derive(input) {
+        Ok(output) => output.into(),
+        Err(err) => err.to_compile_error().into(),
+    }
+}
 
-    TokenStream::new()
+fn do_derive(input: TokenStream) -> Result<TokenStream2, syn::Error> {
+    let ast: syn::DeriveInput = syn::parse(input)?;
+
+    let src_struct_name = &ast.ident;
+    let src_fields = parse_fields(&ast)?;
+
+    let dst_struct_name = dst_struct_name(src_struct_name);
+    let dst_struct = dst_struct(&dst_struct_name, &src_fields);
+    let src_builder_method = src_builder_method(src_struct_name, &dst_struct_name, &src_fields);
+
+    Ok(quote! {
+        #dst_struct
+
+        #src_builder_method
+    })
+}
+
+fn parse_fields(ast: &syn::DeriveInput) -> Result<Vec<syn::Field>, syn::Error> {
+    let data = match &ast.data {
+        syn::Data::Struct(data) => data,
+        _ => {
+            return Err(syn::Error::new_spanned(
+                ast,
+                "Builder derive only supports structs",
+            ))
+        }
+    };
+
+    Ok(data.fields.iter().map(Clone::clone).collect())
+}
+
+fn dst_struct_name(src_name: &syn::Ident) -> syn::Ident {
+    let name = format!("__{}Builder__", src_name);
+    syn::Ident::new(&name, src_name.span())
+}
+
+fn dst_struct(
+    dst_name: &syn::Ident,
+    src_fields: &[syn::Field],
+) -> TokenStream2 {
+    let dst_fields = src_fields.iter().map(|field| {
+        let name = field.ident.as_ref().unwrap();
+        let ty = &field.ty;
+
+        quote! {
+            #name: Option<#ty>,
+        }
+    });
+
+    quote! {
+        pub struct #dst_name {
+            #(#dst_fields)*
+        }
+    }
+}
+
+fn src_builder_method(
+    src_name: &syn::Ident,
+    dst_name: &syn::Ident,
+    src_fields: &[syn::Field],
+) -> TokenStream2 {
+    let dst_fileds = src_fields.iter().map(|field| {
+        let name = field.ident.as_ref().unwrap();
+        quote! {
+            #name: None,
+        }
+    });
+
+    quote! {
+        impl #src_name {
+            pub fn builder() -> #dst_name {
+                #dst_name {
+                    #(#dst_fileds)*
+                }
+            }
+        }
+    }
 }
