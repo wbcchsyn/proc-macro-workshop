@@ -18,14 +18,16 @@ fn do_derive(input: TokenStream) -> Result<TokenStream2, syn::Error> {
     let src_fields = parse_fields(&ast)?;
 
     let dst_struct_name = dst_struct_name(src_struct_name);
-    let dst_struct = dst_struct(&dst_struct_name, &src_fields);
-    let src_builder_method = src_builder_method(src_struct_name, &dst_struct_name, &src_fields);
-    let setter_methods = src_fields.iter().map(setter_method);
+    let dst_struct = dst_struct(&dst_struct_name, src_fields.clone());
+    let src_builder_method = src_builder_method(&dst_struct_name, src_fields.clone());
+    let setter_methods = src_fields.clone().map(setter_method);
 
     Ok(quote! {
         #dst_struct
 
-        #src_builder_method
+        impl #src_struct_name {
+            #src_builder_method
+        }
 
         impl #dst_struct_name {
             #(#setter_methods)*
@@ -33,7 +35,9 @@ fn do_derive(input: TokenStream) -> Result<TokenStream2, syn::Error> {
     })
 }
 
-fn parse_fields(ast: &syn::DeriveInput) -> Result<Vec<syn::Field>, syn::Error> {
+fn parse_fields(
+    ast: &syn::DeriveInput,
+) -> Result<syn::punctuated::Iter<'_, syn::Field>, syn::Error> {
     let data = match &ast.data {
         syn::Data::Struct(data) => data,
         _ => {
@@ -44,7 +48,7 @@ fn parse_fields(ast: &syn::DeriveInput) -> Result<Vec<syn::Field>, syn::Error> {
         }
     };
 
-    Ok(data.fields.iter().map(Clone::clone).collect())
+    Ok(data.fields.iter())
 }
 
 fn dst_struct_name(src_name: &syn::Ident) -> syn::Ident {
@@ -52,8 +56,11 @@ fn dst_struct_name(src_name: &syn::Ident) -> syn::Ident {
     syn::Ident::new(&name, src_name.span())
 }
 
-fn dst_struct(dst_name: &syn::Ident, src_fields: &[syn::Field]) -> TokenStream2 {
-    let dst_fields = src_fields.iter().map(|field| {
+fn dst_struct<'a, T>(dst_name: &syn::Ident, src_fields: T) -> TokenStream2
+where
+    T: Iterator<Item = &'a syn::Field>,
+{
+    let dst_fields = src_fields.map(|field| {
         let name = field.ident.as_ref().unwrap();
         let ty = &field.ty;
 
@@ -69,12 +76,11 @@ fn dst_struct(dst_name: &syn::Ident, src_fields: &[syn::Field]) -> TokenStream2 
     }
 }
 
-fn src_builder_method(
-    src_name: &syn::Ident,
-    dst_name: &syn::Ident,
-    src_fields: &[syn::Field],
-) -> TokenStream2 {
-    let dst_fileds = src_fields.iter().map(|field| {
+fn src_builder_method<'a, T>(dst_name: &syn::Ident, src_fields: T) -> TokenStream2
+where
+    T: Iterator<Item = &'a syn::Field>,
+{
+    let dst_fileds = src_fields.map(|field| {
         let name = field.ident.as_ref().unwrap();
         quote! {
             #name: None,
@@ -82,11 +88,9 @@ fn src_builder_method(
     });
 
     quote! {
-        impl #src_name {
-            pub fn builder() -> #dst_name {
-                #dst_name {
-                    #(#dst_fileds)*
-                }
+        pub fn builder() -> #dst_name {
+            #dst_name {
+                #(#dst_fileds)*
             }
         }
     }
