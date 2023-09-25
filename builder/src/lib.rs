@@ -20,11 +20,16 @@ fn do_derive(input: TokenStream) -> Result<TokenStream2, syn::Error> {
     let dst_struct_name = dst_struct_name(src_struct_name);
     let dst_struct = dst_struct(&dst_struct_name, &src_fields);
     let src_builder_method = src_builder_method(src_struct_name, &dst_struct_name, &src_fields);
+    let setter_methods = src_fields.iter().map(setter_method);
 
     Ok(quote! {
         #dst_struct
 
         #src_builder_method
+
+        impl #dst_struct_name {
+            #(#setter_methods)*
+        }
     })
 }
 
@@ -47,10 +52,7 @@ fn dst_struct_name(src_name: &syn::Ident) -> syn::Ident {
     syn::Ident::new(&name, src_name.span())
 }
 
-fn dst_struct(
-    dst_name: &syn::Ident,
-    src_fields: &[syn::Field],
-) -> TokenStream2 {
+fn dst_struct(dst_name: &syn::Ident, src_fields: &[syn::Field]) -> TokenStream2 {
     let dst_fields = src_fields.iter().map(|field| {
         let name = field.ident.as_ref().unwrap();
         let ty = &field.ty;
@@ -86,6 +88,18 @@ fn src_builder_method(
                     #(#dst_fileds)*
                 }
             }
+        }
+    }
+}
+
+fn setter_method(src_field: &syn::Field) -> TokenStream2 {
+    let name = src_field.ident.as_ref().unwrap();
+    let ty = &src_field.ty;
+
+    quote! {
+        pub fn #name(&mut self, #name: #ty) -> &mut Self {
+            self.#name = Some(#name);
+            self
         }
     }
 }
