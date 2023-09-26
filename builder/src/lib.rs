@@ -3,7 +3,7 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::{quote, ToTokens};
 use syn;
 
-#[proc_macro_derive(Builder)]
+#[proc_macro_derive(Builder, attributes(builder))]
 pub fn derive(input: TokenStream) -> TokenStream {
     match do_derive(input) {
         Ok(output) => output.into(),
@@ -158,9 +158,87 @@ where
     }
 }
 
+fn builder_each_attributes(src_field: &syn::Field) -> syn::Result<Vec<syn::Ident>> {
+    let attrs = src_field.attrs.iter();
+    let attrs = attrs.filter(|&attr| attr.path().is_ident("builder"));
+
+    let mut ret = Vec::new();
+
+    for attr in attrs {
+        let meta: syn::Meta = attr.parse_args()?;
+        match meta {
+            syn::Meta::NameValue(mnv) => {
+                if mnv.path.is_ident("each") {
+                    match &mnv.value {
+                        syn::Expr::Lit(lit) => match &lit.lit {
+                            syn::Lit::Str(lit) => ret.push(lit.parse()?),
+                            _ => {
+                                return Err(syn::Error::new_spanned(
+                                    mnv.value,
+                                    "expected string literal",
+                                ))
+                            }
+                        },
+                        _ => {
+                            return Err(syn::Error::new_spanned(
+                                mnv.value,
+                                "expected string literal",
+                            ))
+                        }
+                    }
+                } else {
+                    return Err(syn::Error::new_spanned(
+                        mnv.path,
+                        "expected `builder(each = \"...\")`",
+                    ));
+                }
+            }
+            _ => {
+                return Err(syn::Error::new_spanned(
+                    meta,
+                    "expected `builder(each = \"...\")`",
+                ))
+            }
+        }
+    }
+
+    Ok(ret)
+}
+
 fn setter_method(src_field: &syn::Field) -> TokenStream2 {
     let name = src_field.ident.as_ref().unwrap();
     let ty = &src_field.ty;
+
+    let eachs = match builder_each_attributes(src_field) {
+        Ok(eachs) => eachs,
+        Err(err) => return err.to_compile_error(),
+    };
+
+    if 0 < eachs.len() {
+        if !is_vec(ty) {
+            return syn::Error::new_spanned(
+                src_field,
+                "`builder` attribute supports only `Vec` type property.",
+            )
+            .to_compile_error();
+        }
+
+        let each_setters = eachs.iter().map(|each| {
+            let each = each.to_token_stream();
+            let ty = extract_last_template_parameter(ty);
+
+            quote! {
+                pub fn #each(&mut self, val: #ty) -> &mut Self {
+                    self.#name.push(val);
+                    self
+                }
+            }
+        });
+
+        return quote! {
+            #(#each_setters)*
+        };
+    }
 
     if is_option(ty) {
         let ty = extract_last_template_parameter(ty);
