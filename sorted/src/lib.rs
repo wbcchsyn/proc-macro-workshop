@@ -21,11 +21,34 @@ pub fn sorted(args: TokenStream, input: TokenStream) -> TokenStream {
 }
 
 fn do_sorted(args: &TokenStream2, item: &syn::Item) -> syn::Result<()> {
-    match item {
-        syn::Item::Enum(_) => Ok(()),
-        _ => Err(syn::Error::new_spanned(
-            args,
-            "expected enum or match expression",
-        )),
+    let item = match item {
+        syn::Item::Enum(item) => item,
+        _ => {
+            return Err(syn::Error::new_spanned(
+                args,
+                "expected enum or match expression",
+            ))
+        }
+    };
+
+    for i in 1..item.variants.len() {
+        let prev = &item.variants[i - 1].ident;
+        let cur = &item.variants[i].ident;
+
+        if cur < prev {
+            for j in 0..i {
+                let prev = &item.variants[j].ident;
+                let cur = &item.variants[i].ident;
+
+                if cur < prev {
+                    return Err(syn::Error::new_spanned(
+                        cur,
+                        format!("{} should sort before {}", cur, prev),
+                    ));
+                }
+            }
+        }
     }
+
+    Ok(())
 }
