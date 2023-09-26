@@ -166,36 +166,33 @@ fn builder_each_attributes(src_field: &syn::Field) -> syn::Result<Vec<syn::Ident
 
     for attr in attrs {
         let meta: syn::Meta = attr.parse_args()?;
-        match meta {
+        match &meta {
             syn::Meta::NameValue(mnv) => {
                 if mnv.path.is_ident("each") {
                     match &mnv.value {
                         syn::Expr::Lit(lit) => match &lit.lit {
                             syn::Lit::Str(lit) => ret.push(lit.parse()?),
                             _ => {
-                                return Err(syn::Error::new_spanned(
-                                    mnv.value,
-                                    "expected string literal",
-                                ))
+                                return Err(syn::Error::new_spanned(lit, "expected string literal"))
                             }
                         },
                         _ => {
                             return Err(syn::Error::new_spanned(
-                                mnv.value,
+                                &mnv.value,
                                 "expected string literal",
                             ))
                         }
                     }
                 } else {
                     return Err(syn::Error::new_spanned(
-                        mnv.path,
+                        attr,
                         "expected `builder(each = \"...\")`",
                     ));
                 }
             }
             _ => {
                 return Err(syn::Error::new_spanned(
-                    meta,
+                    attr,
                     "expected `builder(each = \"...\")`",
                 ))
             }
