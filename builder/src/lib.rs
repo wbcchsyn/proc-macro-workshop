@@ -18,13 +18,15 @@ fn do_derive(input: TokenStream) -> Result<TokenStream2, syn::Error> {
     let src_fields = parse_fields(&ast)?;
 
     let dst_struct_name = dst_struct_name(src_struct_name);
-    let dst_struct = dst_struct(&dst_struct_name, src_fields.clone());
+    let dst_struct_fields = src_fields.clone().map(dst_struct_field);
     let src_builder_method = src_builder_method(&dst_struct_name, src_fields.clone());
     let setter_methods = src_fields.clone().map(setter_method);
     let dst_build_method = dst_build_method(src_struct_name, src_fields.clone());
 
     Ok(quote! {
-        #dst_struct
+        pub struct #dst_struct_name {
+            #(#dst_struct_fields)*
+        }
 
         impl #src_struct_name {
             #src_builder_method
@@ -59,23 +61,12 @@ fn dst_struct_name(src_name: &syn::Ident) -> syn::Ident {
     syn::Ident::new(&name, src_name.span())
 }
 
-fn dst_struct<'a, T>(dst_name: &syn::Ident, src_fields: T) -> TokenStream2
-where
-    T: Iterator<Item = &'a syn::Field>,
-{
-    let dst_fields = src_fields.map(|field| {
-        let name = field.ident.as_ref().unwrap();
-        let ty = &field.ty;
-
-        quote! {
-            #name: Option<#ty>,
-        }
-    });
+fn dst_struct_field(src_field: &syn::Field) -> TokenStream2 {
+    let name = src_field.ident.as_ref().unwrap();
+    let ty = &src_field.ty;
 
     quote! {
-        pub struct #dst_name {
-            #(#dst_fields)*
-        }
+        #name: Option<#ty>,
     }
 }
 
@@ -115,7 +106,7 @@ fn dst_build_method<'a, T>(src_name: &syn::Ident, src_fields: T) -> TokenStream2
 where
     T: Iterator<Item = &'a syn::Field> + Clone,
 {
-    let built_check = src_fields.clone().map(|field|{
+    let built_check = src_fields.clone().map(|field| {
         let name = field.ident.as_ref().unwrap();
         quote! {
             if self.#name.is_none() {
