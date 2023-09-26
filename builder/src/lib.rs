@@ -36,6 +36,12 @@ fn do_derive(input: TokenStream) -> Result<TokenStream2, syn::Error> {
             #(#setter_methods)*
 
             #dst_build_method
+
+            fn take_vec<T>(src: &mut Vec<T>) -> Vec<T> {
+                let mut ret = Vec::new();
+                ::std::mem::swap(src, &mut ret);
+                ret
+            }
         }
     })
 }
@@ -64,6 +70,15 @@ fn is_option(ty: &syn::Type) -> bool {
     };
 
     is_same_path(&["std", "option", "Option"], path)
+}
+
+fn is_vec(ty: &syn::Type) -> bool {
+    let path = match ty {
+        syn::Type::Path(path) => &path.path,
+        _ => return false,
+    };
+
+    is_same_path(&["std", "vec", "Vec"], path)
 }
 
 fn extract_last_template_parameter(ty: &syn::Type) -> TokenStream2 {
@@ -112,6 +127,10 @@ fn dst_struct_field(src_field: &syn::Field) -> TokenStream2 {
         quote! {
             #name: #ty,
         }
+    } else if is_vec(ty) {
+        quote! {
+            #name: #ty,
+        }
     } else {
         quote! {
             #name: Option<#ty>,
@@ -126,7 +145,7 @@ where
     let dst_fileds = src_fields.map(|field| {
         let name = field.ident.as_ref().unwrap();
         quote! {
-            #name: None,
+            #name: Default::default(),
         }
     });
 
@@ -152,6 +171,13 @@ fn setter_method(src_field: &syn::Field) -> TokenStream2 {
                 self
             }
         }
+    } else if is_vec(ty) {
+        quote! {
+            pub fn #name(&mut self, #name: #ty) -> &mut Self {
+                self.#name = #name;
+                self
+            }
+        }
     } else {
         quote! {
             pub fn #name(&mut self, #name: #ty) -> &mut Self {
@@ -170,7 +196,7 @@ where
         let name = field.ident.as_ref().unwrap();
         let ty = &field.ty;
 
-        if is_option(ty) {
+        if is_option(ty) || is_vec(ty) {
             TokenStream2::new()
         } else {
             quote! {
@@ -189,6 +215,10 @@ where
         if is_option(ty) {
             quote! {
                 #name: self.#name.take(),
+            }
+        } else if is_vec(ty) {
+            quote! {
+                #name: Self::take_vec(&mut self.#name),
             }
         } else {
             quote! {
