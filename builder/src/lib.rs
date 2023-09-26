@@ -5,15 +5,15 @@ use syn;
 
 #[proc_macro_derive(Builder, attributes(builder))]
 pub fn derive(input: TokenStream) -> TokenStream {
-    match do_derive(input) {
+    let ast = syn::parse_macro_input!(input as syn::DeriveInput);
+
+    match do_derive(ast) {
         Ok(output) => output.into(),
         Err(err) => err.to_compile_error().into(),
     }
 }
 
-fn do_derive(input: TokenStream) -> Result<TokenStream2, syn::Error> {
-    let ast: syn::DeriveInput = syn::parse(input)?;
-
+fn do_derive(ast: syn::DeriveInput) -> syn::Result<TokenStream2> {
     let src_struct_name = &ast.ident;
     let src_fields = parse_fields(&ast)?;
 
