@@ -37,8 +37,8 @@ fn do_derive(ast: syn::DeriveInput) -> syn::Result<TokenStream2> {
 
             #dst_build_method
 
-            fn take_vec<T>(src: &mut Vec<T>) -> Vec<T> {
-                let mut ret = Vec::new();
+            fn take_vec<T>(src: &mut ::std::vec::Vec<T>) -> ::std::vec::Vec<T> {
+                let mut ret = ::std::vec::Vec::new();
                 ::std::mem::swap(src, &mut ret);
                 ret
             }
@@ -133,7 +133,7 @@ fn dst_struct_field(src_field: &syn::Field) -> TokenStream2 {
         }
     } else {
         quote! {
-            #name: Option<#ty>,
+            #name: ::std::option::Option<#ty>,
         }
     }
 }
@@ -145,7 +145,7 @@ where
     let dst_fileds = src_fields.map(|field| {
         let name = field.ident.as_ref().unwrap();
         quote! {
-            #name: Default::default(),
+            #name: ::std::default::Default::default(),
         }
     });
 
@@ -242,7 +242,7 @@ fn setter_method(src_field: &syn::Field) -> TokenStream2 {
 
         quote! {
             pub fn #name(&mut self, #name: #ty) -> &mut Self {
-                self.#name = Some(#name);
+                self.#name = ::std::option::Option::Some(#name);
                 self
             }
         }
@@ -256,7 +256,7 @@ fn setter_method(src_field: &syn::Field) -> TokenStream2 {
     } else {
         quote! {
             pub fn #name(&mut self, #name: #ty) -> &mut Self {
-                self.#name = Some(#name);
+                self.#name = ::std::option::Option::Some(#name);
                 self
             }
         }
@@ -277,7 +277,7 @@ where
             quote! {
                 if self.#name.is_none() {
                     let msg = format!("Field {} is not set yet.", stringify!(#name));
-                    return Err(msg.into());
+                    return ::std::result::Result::Err(msg.into());
                 }
             }
         }
