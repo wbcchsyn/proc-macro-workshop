@@ -1,6 +1,6 @@
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
-use quote::quote;
+use quote::{quote, ToTokens};
 use syn;
 
 #[proc_macro_derive(Builder)]
@@ -40,6 +40,49 @@ fn do_derive(input: TokenStream) -> Result<TokenStream2, syn::Error> {
     })
 }
 
+fn is_same_path(lhs: &[&str], rhs: &syn::Path) -> bool {
+    if rhs.leading_colon.is_some() && lhs.len() != rhs.segments.len() {
+        return false;
+    }
+    if lhs.len() < rhs.segments.len() {
+        return false;
+    }
+    if rhs.segments.len() == 0 {
+        return false;
+    }
+
+    lhs.iter()
+        .rev()
+        .zip(rhs.segments.iter().rev())
+        .all(|(&l, r)| r.ident == l)
+}
+
+fn is_option(ty: &syn::Type) -> bool {
+    let path = match ty {
+        syn::Type::Path(path) => &path.path,
+        _ => return false,
+    };
+
+    is_same_path(&["std", "option", "Option"], path)
+}
+
+fn extract_last_template_parameter(ty: &syn::Type) -> TokenStream2 {
+    let path = match ty {
+        syn::Type::Path(path) => &path.path,
+        _ => return TokenStream2::new(),
+    };
+
+    if path.segments.is_empty() {
+        return TokenStream2::new();
+    }
+
+    match &path.segments.last().unwrap().arguments {
+        syn::PathArguments::AngleBracketed(ret) => ret.args.to_token_stream(),
+        syn::PathArguments::Parenthesized(ret) => ret.to_token_stream(),
+        syn::PathArguments::None => TokenStream2::new(),
+    }
+}
+
 fn parse_fields(
     ast: &syn::DeriveInput,
 ) -> Result<syn::punctuated::Iter<'_, syn::Field>, syn::Error> {
@@ -65,8 +108,14 @@ fn dst_struct_field(src_field: &syn::Field) -> TokenStream2 {
     let name = src_field.ident.as_ref().unwrap();
     let ty = &src_field.ty;
 
-    quote! {
-        #name: Option<#ty>,
+    if is_option(ty) {
+        quote! {
+            #name: #ty,
+        }
+    } else {
+        quote! {
+            #name: Option<#ty>,
+        }
     }
 }
 
@@ -94,10 +143,21 @@ fn setter_method(src_field: &syn::Field) -> TokenStream2 {
     let name = src_field.ident.as_ref().unwrap();
     let ty = &src_field.ty;
 
-    quote! {
-        pub fn #name(&mut self, #name: #ty) -> &mut Self {
-            self.#name = Some(#name);
-            self
+    if is_option(ty) {
+        let ty = extract_last_template_parameter(ty);
+
+        quote! {
+            pub fn #name(&mut self, #name: #ty) -> &mut Self {
+                self.#name = Some(#name);
+                self
+            }
+        }
+    } else {
+        quote! {
+            pub fn #name(&mut self, #name: #ty) -> &mut Self {
+                self.#name = Some(#name);
+                self
+            }
         }
     }
 }
@@ -108,18 +168,32 @@ where
 {
     let built_check = src_fields.clone().map(|field| {
         let name = field.ident.as_ref().unwrap();
-        quote! {
-            if self.#name.is_none() {
-                let msg = format!("Field {} is not set yet.", stringify!(#name));
-                return Err(msg.into());
+        let ty = &field.ty;
+
+        if is_option(ty) {
+            TokenStream2::new()
+        } else {
+            quote! {
+                if self.#name.is_none() {
+                    let msg = format!("Field {} is not set yet.", stringify!(#name));
+                    return Err(msg.into());
+                }
             }
         }
     });
 
     let built_fields = src_fields.clone().map(|field| {
         let name = field.ident.as_ref().unwrap();
-        quote! {
-            #name: self.#name.take().unwrap(),
+        let ty = &field.ty;
+
+        if is_option(ty) {
+            quote! {
+                #name: self.#name.take(),
+            }
+        } else {
+            quote! {
+                #name: self.#name.take().unwrap(),
+            }
         }
     });
 
