@@ -24,41 +24,127 @@ fn do_seq(seq: Seq) -> syn::Result<TokenStream2> {
     };
 
     let variable = seq.loop_var.to_string();
-    let tokens = (start..end).fold(Vec::new(), |mut acc, i| {
-        for stmt in seq.block.iter() {
-            let token = replace_ident(stmt, &variable, i);
-            acc.push(token);
-        }
+    let tokens = (start..end).fold(Vec::new(), |mut acc, value| {
+        let mut rev_tokens = seq.block.clone();
+        rev_tokens.reverse();
+
+        acc.push(expand_tokens(rev_tokens, &variable, value));
         acc
     });
 
     Ok(quote! { #(#tokens)* })
 }
 
-fn replace_ident<T: ToTokens>(token: &T, variable: &str, value: i128) -> TokenStream2 {
-    use proc_macro2::Delimiter;
+fn expand_tokens(mut rev_tokens: Vec<TokenTree2>, variable: &str, value: i128) -> TokenStream2 {
+    let mut acc = Vec::new();
 
-    let tokens = token.to_token_stream().into_iter().map(|tree| match &tree {
-        TokenTree2::Ident(ident) => {
-            if ident == variable {
-                syn::LitInt::new(&value.to_string(), ident.span()).into_token_stream()
-            } else {
-                tree.into_token_stream()
+    while !rev_tokens.is_empty() {
+        match rev_tokens.last().unwrap() {
+            TokenTree2::Group(group) => {
+                use proc_macro2::Delimiter;
+                let mut rev_inner_tokens: Vec<TokenTree2> = group.stream().into_iter().collect();
+                rev_inner_tokens.reverse();
+
+                let inner = expand_tokens(rev_inner_tokens, variable, value);
+                match group.delimiter() {
+                    Delimiter::Parenthesis => acc.push(quote! { (#inner) }),
+                    Delimiter::Brace => acc.push(quote! { {#inner} }),
+                    Delimiter::Bracket => acc.push(quote! { [#inner] }),
+                    Delimiter::None => acc.push(inner),
+                }
+
+                rev_tokens.pop();
+            }
+            TokenTree2::Ident(_) => {
+                if expand_tilda_pattern(&mut rev_tokens, variable, value) {
+                    // Do nothing, because the expanded token is already pushed to `rev_tokens`.
+                    // Go to next iteration.
+                } else {
+                    let ident = match rev_tokens.pop().unwrap() {
+                        TokenTree2::Ident(ident) => ident,
+                        _ => unreachable!(),
+                    };
+
+                    if ident == variable {
+                        let token = syn::LitInt::new(&value.to_string(), ident.span());
+                        acc.push(token.into_token_stream());
+                    } else {
+                        acc.push(ident.into_token_stream());
+                    }
+                }
+            }
+            _ => {
+                let token = rev_tokens.pop().unwrap();
+                acc.push(token.into_token_stream());
             }
         }
-        TokenTree2::Group(group) => {
-            let inner = replace_ident(&group.stream(), variable, value);
-            match group.delimiter() {
-                Delimiter::Parenthesis => quote! { (#inner) },
-                Delimiter::Brace => quote! { {#inner} },
-                Delimiter::Bracket => quote! { <#inner> },
-                Delimiter::None => inner,
-            }
-        }
-        _ => tree.into_token_stream(),
+    }
+
+    quote! { #(#acc)* }
+}
+
+/// If the tokens starts with (`rev_tokens` ends with) a tilde pattern like `prefix~N` or `prefix~N~suffix`, consumes them,
+/// expands into an `Ident`, pushes it to the `rev_tokens`, and returns true; otherwise, returns false.
+fn expand_tilda_pattern(rev_tokens: &mut Vec<TokenTree2>, variable: &str, value: i128) -> bool {
+    // tilda pattern requires at least 3 tokens.
+    if rev_tokens.len() < 3 {
+        return false;
+    }
+
+    // The first token must be `syn::Ident`
+    let prefix = match rev_tokens.last().unwrap() {
+        TokenTree2::Ident(ident) => ident,
+        _ => return false,
+    };
+
+    // The second token must be '~'.
+    match &rev_tokens[rev_tokens.len() - 2] {
+        TokenTree2::Punct(punct) if punct.as_char() == '~' => {}
+        _ => return false,
+    };
+
+    // The third token must be variable.
+    match &rev_tokens[rev_tokens.len() - 3] {
+        TokenTree2::Ident(ident) if ident == variable => {}
+        _ => return false,
+    };
+
+    let expanded = syn::Ident::new(&format!("{}{}", prefix, value), prefix.span());
+    (0..3).for_each(|_| {
+        rev_tokens.pop();
     });
 
-    quote! { #(#tokens)* }
+    // If '~suffix' follows, append the suffix to expanded.
+    if rev_tokens.len() < 2 {
+        rev_tokens.push(TokenTree2::Ident(expanded));
+        return true;
+    }
+
+    // The first token must be '~'.
+    match rev_tokens.last().unwrap() {
+        TokenTree2::Punct(punct) if punct.as_char() == '~' => {}
+        _ => {
+            rev_tokens.push(TokenTree2::Ident(expanded));
+            return true;
+        }
+    }
+
+    // The second token must be `Ident`.
+    let ident = match rev_tokens[rev_tokens.len() - 2] {
+        TokenTree2::Ident(ref ident) => ident,
+        _ => {
+            rev_tokens.push(TokenTree2::Ident(expanded));
+            return true;
+        }
+    };
+
+    let expanded = syn::Ident::new(&format!("{}{}", expanded, ident), expanded.span());
+    (0..2).for_each(|_| {
+        rev_tokens.pop();
+    });
+    rev_tokens.push(TokenTree2::Ident(expanded));
+
+    true
 }
 
 struct Seq {
