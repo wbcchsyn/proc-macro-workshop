@@ -1,5 +1,5 @@
 use proc_macro::TokenStream;
-use proc_macro2::TokenStream as TokenStream2;
+use proc_macro2::{TokenStream as TokenStream2, TokenTree as TokenTree2};
 use quote::{quote, ToTokens};
 use syn::parse::Parse;
 
@@ -25,7 +25,7 @@ fn do_seq(seq: Seq) -> syn::Result<TokenStream2> {
 
     let variable = seq.loop_var.to_string();
     let tokens = (start..end).fold(Vec::new(), |mut acc, i| {
-        for stmt in seq.block.stmts.iter() {
+        for stmt in seq.block.iter() {
             let token = replace_ident(stmt, &variable, i);
             acc.push(token);
         }
@@ -36,21 +36,23 @@ fn do_seq(seq: Seq) -> syn::Result<TokenStream2> {
 }
 
 fn replace_ident<T: ToTokens>(token: &T, variable: &str, value: i128) -> TokenStream2 {
+    use proc_macro2::Delimiter;
+
     let tokens = token.to_token_stream().into_iter().map(|tree| match &tree {
-        proc_macro2::TokenTree::Ident(ident) => {
+        TokenTree2::Ident(ident) => {
             if ident == variable {
                 syn::LitInt::new(&value.to_string(), ident.span()).into_token_stream()
             } else {
                 tree.into_token_stream()
             }
         }
-        proc_macro2::TokenTree::Group(group) => {
+        TokenTree2::Group(group) => {
             let inner = replace_ident(&group.stream(), variable, value);
             match group.delimiter() {
-                proc_macro2::Delimiter::Parenthesis => quote! { (#inner) },
-                proc_macro2::Delimiter::Brace => quote! { {#inner} },
-                proc_macro2::Delimiter::Bracket => quote! { <#inner> },
-                proc_macro2::Delimiter::None => inner,
+                Delimiter::Parenthesis => quote! { (#inner) },
+                Delimiter::Brace => quote! { {#inner} },
+                Delimiter::Bracket => quote! { <#inner> },
+                Delimiter::None => inner,
             }
         }
         _ => tree.into_token_stream(),
@@ -65,18 +67,34 @@ struct Seq {
     start: syn::LitInt,
     dot2: syn::RangeLimits,
     end: syn::LitInt,
-    block: Box<syn::Block>,
+    _brace: syn::token::Brace,
+    block: Vec<TokenTree2>,
 }
 
 impl Parse for Seq {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        let loop_var: syn::Ident = input.parse()?;
+        let _in: syn::Token![in] = input.parse()?;
+        let start: syn::LitInt = input.parse()?;
+        let dot2: syn::RangeLimits = input.parse()?;
+        let end: syn::LitInt = input.parse()?;
+
+        let content;
+        let _brace = syn::braced!(content in input);
+
+        let mut block: Vec<TokenTree2> = Vec::new();
+        while !content.is_empty() {
+            block.push(content.parse()?);
+        }
+
         Ok(Self {
-            loop_var: input.parse()?,
-            _in: input.parse()?,
-            start: input.parse()?,
-            dot2: input.parse()?,
-            end: input.parse()?,
-            block: input.parse()?,
+            loop_var,
+            _in,
+            start,
+            dot2,
+            end,
+            _brace,
+            block,
         })
     }
 }
