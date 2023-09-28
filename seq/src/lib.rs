@@ -24,18 +24,60 @@ fn do_seq(seq: Seq) -> syn::Result<TokenStream2> {
     };
 
     let variable = seq.loop_var.to_string();
-    let tokens = (start..end).fold(Vec::new(), |mut acc, value| {
-        let mut rev_tokens = seq.block.clone();
+    if contains_loop(&seq.block) {
+        Ok(expand_loop(&seq.block, start, end, &variable))
+    } else {
+        let mut rev_tokens = seq.block;
         rev_tokens.reverse();
 
-        acc.push(expand_tokens(rev_tokens, &variable, value));
-        acc
-    });
+        let acc = (start..end).fold(Vec::new(), |mut acc, value| {
+            acc.push(expand_variable(rev_tokens.clone(), &variable, value));
+            acc
+        });
 
-    Ok(quote! { #(#tokens)* })
+        Ok(quote! { #(#acc)* })
+    }
 }
 
-fn expand_tokens(mut rev_tokens: Vec<TokenTree2>, variable: &str, value: i128) -> TokenStream2 {
+fn expand_loop(mut tokens: &[TokenTree2], start: i128, end: i128, variable: &str) -> TokenStream2 {
+    let mut acc = Vec::new();
+
+    while 0 < tokens.len() {
+        if 2 < tokens.len() && is_loop(&tokens[0], &tokens[1], &tokens[2]) {
+            let group = match &tokens[1] {
+                TokenTree2::Group(group) => group,
+                _ => unreachable!(),
+            };
+
+            let mut rev_tokens: Vec<TokenTree2> = group.stream().into_iter().collect();
+            rev_tokens.reverse();
+
+            (start..end)
+                .for_each(|value| acc.push(expand_variable(rev_tokens.clone(), variable, value)));
+            tokens = &tokens[3..];
+        } else if let TokenTree2::Group(group) = &tokens[0] {
+            let inner_tokens: Vec<TokenTree2> = group.stream().into_iter().collect();
+            let inner_tokens = expand_loop(&inner_tokens, start, end, variable);
+
+            use proc_macro2::Delimiter;
+            match group.delimiter() {
+                Delimiter::Parenthesis => acc.push(quote! { (#inner_tokens) }),
+                Delimiter::Brace => acc.push(quote! { {#inner_tokens} }),
+                Delimiter::Bracket => acc.push(quote! { [#inner_tokens] }),
+                Delimiter::None => acc.push(inner_tokens),
+            }
+
+            tokens = &tokens[1..];
+        } else {
+            acc.push(tokens[0].to_token_stream());
+            tokens = &tokens[1..];
+        }
+    }
+
+    quote! {#(#acc)*}
+}
+
+fn expand_variable(mut rev_tokens: Vec<TokenTree2>, variable: &str, value: i128) -> TokenStream2 {
     let mut acc = Vec::new();
 
     while !rev_tokens.is_empty() {
@@ -45,7 +87,7 @@ fn expand_tokens(mut rev_tokens: Vec<TokenTree2>, variable: &str, value: i128) -
                 let mut rev_inner_tokens: Vec<TokenTree2> = group.stream().into_iter().collect();
                 rev_inner_tokens.reverse();
 
-                let inner = expand_tokens(rev_inner_tokens, variable, value);
+                let inner = expand_variable(rev_inner_tokens, variable, value);
                 match group.delimiter() {
                     Delimiter::Parenthesis => acc.push(quote! { (#inner) }),
                     Delimiter::Brace => acc.push(quote! { {#inner} }),
@@ -81,6 +123,45 @@ fn expand_tokens(mut rev_tokens: Vec<TokenTree2>, variable: &str, value: i128) -
     }
 
     quote! { #(#acc)* }
+}
+
+fn contains_loop(tokens: &[TokenTree2]) -> bool {
+    if tokens.windows(3).any(|tokens| {
+        let (sharp, group, asterisk) = (&tokens[0], &tokens[1], &tokens[2]);
+        is_loop(sharp, group, asterisk)
+    }) {
+        return true;
+    }
+
+    tokens
+        .iter()
+        .filter_map(|t| match t {
+            TokenTree2::Group(group) => Some(group),
+            _ => None,
+        })
+        .any(|group| {
+            let tokens: Vec<TokenTree2> = group.stream().into_iter().collect();
+            contains_loop(&tokens)
+        })
+}
+
+fn is_loop(sharp: &TokenTree2, group: &TokenTree2, asterisk: &TokenTree2) -> bool {
+    match sharp {
+        TokenTree2::Punct(punct) if punct.as_char() == '#' => {}
+        _ => return false,
+    };
+
+    match group {
+        TokenTree2::Group(group) if group.delimiter() == proc_macro2::Delimiter::Parenthesis => {}
+        _ => return false,
+    }
+
+    match asterisk {
+        TokenTree2::Punct(punct) if punct.as_char() == '*' => {}
+        _ => return false,
+    }
+
+    true
 }
 
 /// If the tokens starts with (`rev_tokens` ends with) a tilde pattern like `prefix~N` or `prefix~N~suffix`, consumes them,
